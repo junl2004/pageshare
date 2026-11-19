@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ledger Passwords — Backup Builder</title>
+<style>
+:root{--bg:#14161a;--panel:#1c1f26;--line:#2d323c;--fg:#e6e8ec;--dim:#9aa3b2;--acc:#6ea8fe;--ok:#5bd49b;--warn:#f0b86e}
+*{box-sizing:border-box}
+body{margin:0;padding:32px 20px;background:var(--bg);color:var(--fg);
+     font:15px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:880px;margin:0 auto}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--dim);font-size:13px;margin-bottom:24px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin-bottom:18px}
+label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+input[type=text],select{width:100%;padding:9px 11px;background:#111318;color:var(--fg);
+     border:1px solid var(--line);border-radius:7px;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
+.row{display:flex;gap:14px;flex-wrap:wrap}
+.row>div{flex:1;min-width:170px}
+table{width:100%;border-collapse:collapse;margin-top:14px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);font-size:14px}
+th{color:var(--dim);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+td.sets{font:12px ui-monospace,monospace;color:var(--dim)}
+.toggle{display:flex;align-items:center;gap:9px;padding:7px 0}
+.toggle input{width:16px;height:16px;accent-color:var(--acc)}
+.toggle small{color:var(--dim);font:12px ui-monospace,monospace;margin-left:auto}
+button{padding:9px 16px;border-radius:7px;border:1px solid var(--line);background:#252a33;
+       color:var(--fg);font-size:14px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--acc);color:#0d1117;border-color:var(--acc);font-weight:600}
+button.link{background:none;border:none;color:var(--dim);padding:4px 8px}
+button.link:hover{color:#ff8080}
+pre{background:#0f1115;border:1px solid var(--line);border-radius:8px;padding:14px;
+    overflow:auto;max-height:300px;font:12.5px/1.5 ui-monospace,monospace;color:#cfd6e4;margin:0}
+.note{font-size:12.5px;color:var(--dim);margin-top:10px}
+.warn{border-left:3px solid var(--warn);padding-left:12px;color:#e8d5b5;font-size:13px}
+.err{color:#ff8a8a;font-size:13px;min-height:18px;margin-top:6px}
+.bar{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.count{font:12px ui-monospace,monospace;color:var(--dim)}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Ledger Passwords — Backup Builder</h1>
+<div class="sub">Enter settings the way the app shows them. Produces a <code>backup.json</code> you can restore with the official tool. Record layout taken from <code>src/metadata.h</code> and <code>src/password.h</code>.</div>
+
+<div class="panel">
+  <div class="row">
+    <div style="flex:2">
+      <label>Nickname <span class="count" id="cnt">0 / 19</span></label>
+      <input type="text" id="nick" placeholder="e.g. wikipedia.com" maxlength="19" autocomplete="off">
+    </div>
+    <div>
+      <label>Generation rule</label>
+      <select id="ver">
+        <option value="0">version 0 — before 1.4.0</option>
+        <option value="1">version 1 — 1.4.0 and later</option>
+      </select>
+    </div>
+    <div id="lenwrap" class="hide">
+      <label>Password length</label>
+      <select id="len">
+        <option>8</option><option>12</option><option>16</option>
+        <option selected>20</option><option>24</option><option>32</option>
+        <option>48</option><option>64</option>
+        <option value="4">4 — PIN</option><option value="6">6 — PIN</option>
+      </select>
+    </div>
+  </div>
+
+  <label style="margin-top:18px">Character kinds</label>
+  <div id="toggles"></div>
+
+  <div class="err" id="err"></div>
+  <div class="bar">
+    <button id="add">+ Add another entry</button>
+    <span class="count" id="mask"></span>
+  </div>
+  <div class="note" id="draftnote"></div>
+</div>
+
+<div class="panel">
+  <label>Entries included in the file</label>
+  <table>
+    <thead><tr><th>Nickname</th><th>Charsets</th><th>Ver</th><th>Len</th><th style="width:40px"></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="note" id="usage"></div>
+</div>
+
+<div class="panel">
+  <label>backup.json</label>
+  <pre id="out"></pre>
+  <div class="bar">
+    <button class="primary" id="dl">Download backup.json</button>
+    <button id="copy">Copy</button>
+  </div>
+  <div class="note warn" style="margin-top:16px">
+    Restoring <strong>replaces the entire nickname list</strong> on the device. Export your current
+    list first and keep that file unchanged. Derivation happens on the Ledger — this file holds no
+    password and no seed, only nicknames and their settings.
+  </div>
+</div>
+
+<div class="panel">
+  <label>Record format — from src/metadata.h</label>
+<pre>A record is [datalen][kind][data block].
+  data block = [charset][nickname]                    version 0
+             = [charset][password length][nickname]   version 1 and later
+
+  datalen  = bytes in the data block   (0x00 ends the list, 0xFF = erased)
+  kind     = 0 or 1, the generation rule
+  charset  = bitmask, bit0 UPPERCASE  bit4 UNDERSCORE
+                      bit1 LOWERCASE  bit5 SPACE
+                      bit2 NUMBERS    bit6 SPECIAL
+                      bit3 MINUS      bit7 BRACKETS
+Records are packed back to back and zero-padded to 4096 bytes.
+Version 0 has no length byte: its length is always 20.</pre>
+  <div class="note">
+    The old app's <strong>dashes</strong> toggle is <code>SEPARATOR_SETS 0x38</code> in
+    <code>password.h</code> — bits 3, 4 and 5 together. <strong>Extra symbols</strong> covers
+    SPECIAL and BRACKETS. A separator-only alphabet is rejected by the app as weak, and the
+    4- and 6-digit PIN lengths require numbers to be the only kind enabled.
+  </div>
+</div>
+
+<div class="panel">
+  <label>README</label>
+  <p style="margin:0 0 14px"><code style="font-size:15px;color:var(--acc)">passwords.ledger.com</code></p>
+
+  <p style="margin:0 0 12px">this page allow u back up password setting from old version output a json<br>
+  and port into latest app after algo change, ala u can still use the old algo under new one</p>
+
+  <p style="margin:0 0 12px">if u already update the app without backup the setting, but u do remember
+  the setting, u can use this page to reconstruct the json</p>
+
+  <p style="margin:0 0 12px">if u forget the setting, u r f**ked anyway</p>
+
+  <p style="margin:0">DYOR and use it at your own risk</p>
+</div>
+
+</div>
+<script>
+const KINDS=[
+ {id:'up', label:'Uppercase',     sets:['UPPERCASE'],                  hint:'A-Z'},
+ {id:'low',label:'Lowercase',     sets:['LOWERCASE'],                  hint:'a-z'},
+ {id:'num',label:'Numbers',       sets:['NUMBERS'],                    hint:'0-9'},
+ {id:'dsh',label:'Dashes',        sets:['MINUS','UNDERSCORE','SPACE'], hint:'-  _  space   (0x38)'},
+ {id:'sym',label:'Extra symbols', sets:['SPECIAL','BRACKETS'],         hint:'"#$%&\'*+,./:;=?!@\\^`|~  []{}()<>'},
+];
+const BITS={UPPERCASE:0,LOWERCASE:1,NUMBERS:2,MINUS:3,UNDERSCORE:4,SPACE:5,SPECIAL:6,BRACKETS:7};
+const SEPARATOR_SETS=0x38, NUMBERS_SET=0x04, STORE=4096, MAX_NICK=19;
+let entries=[];
+const $=id=>document.getElementById(id);
+
+$('toggles').innerHTML=KINDS.map(k=>
+ `<label class="toggle"><input type="checkbox" id="k_${k.id}" checked>
+  <span>${k.label}</span><small>${k.hint.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</small></label>`
+).join('');
+
+const chosen=()=>KINDS.filter(k=>$('k_'+k.id).checked).flatMap(k=>k.sets);
+const maskOf=s=>s.reduce((m,x)=>m|1<<BITS[x],0);
+
+function problem(nick,sets,ver,len){
+  const m=maskOf(sets);
+  if(!nick) return 'Type a nickname first.';
+  if(!/^[\x20-\x7e]+$/.test(nick)) return 'Printable ASCII only.';
+  if(nick.length>MAX_NICK) return `Maximum ${MAX_NICK} characters.`;
+  if(!sets.length) return 'Enable at least one character kind.';
+  if((m & ~SEPARATOR_SETS & 0xff)===0) return 'Dashes alone is rejected by the app as a weak alphabet.';
+  if(ver===1 && (len===4||len===6) && m!==NUMBERS_SET) return 'A 4- or 6-digit PIN needs numbers as the only kind.';
+  return null;
+}
+function recordBytes(e){
+  const nick=[...e.nickname].map(c=>c.charCodeAt(0)), m=maskOf(e.charsets);
+  return e.version===0 ? [1+nick.length, 0, m, ...nick]
+                       : [2+nick.length, 1, m, e.length, ...nick];
+}
+function draft(){
+  const n=$('nick').value.trim(), sets=chosen(),
+        ver=+$('ver').value, len=ver===0?20:+$('len').value;
+  if(problem(n,sets,ver,len) || entries.some(e=>e.nickname===n)) return null;
+  return {nickname:n,charsets:sets,version:ver,length:len,draft:true};
+}
+function allEntries(){ const d=draft(); return d?entries.concat([d]):entries.slice(); }
+function rawHex(list){
+  const b=list.flatMap(recordBytes), used=b.length;
+  while(b.length<STORE) b.push(0);
+  return {hex:b.map(x=>x.toString(16).padStart(2,'0')).join(''), used};
+}
+function build(){
+  const list=allEntries();
+  return {parsed:list.map(e=>e.version===0
+            ? {nickname:e.nickname,charsets:e.charsets,version:0}
+            : {nickname:e.nickname,charsets:e.charsets,version:1,length:e.length}),
+          nicknames_erased_but_still_stored:[],corruptions_encountered:[],
+          raw_metadatas:rawHex(list).hex};
+}
+function render(){
+  const ver=+$('ver').value;
+  $('lenwrap').className = ver===1 ? '' : 'hide';
+  const list=allEntries();
+  $('rows').innerHTML = list.length ? list.map((e,i)=>
+    `<tr${e.draft?' style="opacity:.75"':''}>
+       <td>${e.nickname.replace(/</g,'&lt;')}${e.draft?' <span style="color:#6ea8fe;font-size:11px">· from the form</span>':''}</td>
+       <td class="sets">${e.charsets.join(' · ')}</td><td>${e.version}</td><td>${e.length}</td>
+       <td>${e.draft?'':`<button class="link" data-i="${i}">remove</button>`}</td></tr>`).join('')
+    : `<tr><td colspan="5" style="color:#9aa3b2">Nothing yet — type a nickname above.</td></tr>`;
+  $('rows').querySelectorAll('button').forEach(b=>
+    b.onclick=()=>{entries.splice(+b.dataset.i,1);refresh();});
+  const {used}=rawHex(list);
+  $('usage').textContent=`${list.length} entr${list.length===1?'y':'ies'} · ${used} of ${STORE} bytes used`;
+  $('out').textContent=JSON.stringify(build(),null,4);
+  $('dl').disabled=!list.length;
+  $('draftnote').textContent = draft()
+    ? 'The file below already includes what you typed — just download it. "Add another entry" is only for a second nickname.' : '';
+}
+function refresh(){
+  const s=chosen(), m=maskOf(s);
+  $('mask').textContent = s.length ? `bitmask 0x${m.toString(16).padStart(2,'0')} — ${s.join(', ')}` : '';
+  $('cnt').textContent=`${$('nick').value.length} / ${MAX_NICK}`;
+  const n=$('nick').value.trim(), ver=+$('ver').value, len=ver===0?20:+$('len').value;
+  $('err').textContent = n ? (problem(n,s,ver,len)||'') : '';
+  render();
+}
+$('add').onclick=()=>{
+  const n=$('nick').value.trim(), sets=chosen(),
+        ver=+$('ver').value, len=ver===0?20:+$('len').value;
+  const p=problem(n,sets,ver,len);
+  if(p) return $('err').textContent=p;
+  if(entries.some(e=>e.nickname===n)) return $('err').textContent='That nickname is already in the list.';
+  entries.push({nickname:n,charsets:sets,version:ver,length:len});
+  $('nick').value=''; $('nick').focus(); refresh();
+};
+$('dl').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(build(),null,4)],{type:'application/json'}));
+  a.download='backup.json'; a.click(); URL.revokeObjectURL(a.href);
+};
+$('copy').onclick=async e=>{
+  await navigator.clipboard.writeText(JSON.stringify(build(),null,4));
+  e.target.textContent='Copied'; setTimeout(()=>e.target.textContent='Copy',1200);
+};
+['nick','ver','len'].forEach(i=>$(i).addEventListener('input',refresh));
+$('ver').addEventListener('change',refresh);
+KINDS.forEach(k=>$('k_'+k.id).addEventListener('change',refresh));
+refresh();
+</script>
+</body>
+</html>
